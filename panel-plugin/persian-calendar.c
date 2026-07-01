@@ -89,7 +89,7 @@ load_css (void)
     ".nav-button { background: none; border: none; color: #cdd6f4; font-size: 16px; padding: 4px 12px; border-radius: 6px; }\n"
     ".nav-button:hover { background-color: #313244; color: #f5c2e7; }\n"
     ".weekday-header { font-weight: bold; color: #89b4fa; padding: 6px; text-align: center; font-size: 12px; }\n"
-    ".day-btn { background: #1e1e2e; border: 1px solid #313244; border-radius: 6px; padding: 6px; margin: 1px; min-width: 46px; min-height: 46px; }\n"
+    ".day-btn { background: #1e1e2e; border: 1px solid #313244; border-radius: 6px; padding: 4px; margin: 1px; min-width: 38px; min-height: 38px; }\n"
     ".day-btn:hover { background-color: #313244; border-color: #f5c2e7; }\n"
     ".day-btn.current-day { background-color: #b4befe; border-color: #b4befe; color: #11111b; }\n"
     ".day-btn.current-day .sub-text { color: #313244; }\n"
@@ -98,7 +98,7 @@ load_css (void)
     ".day-btn.other-month { opacity: 0.35; }\n"
     ".main-text { font-size: 14px; font-weight: bold; }\n"
     ".sub-text { font-size: 9px; color: #a6adc8; }\n"
-    ".sidebar { background-color: #11111b; border-right: 1px solid #313244; padding: 16px; width: 250px; }\n"
+    ".sidebar { background-color: #11111b; border-right: 1px solid #313244; padding: 16px; width: 280px; }\n"
     ".sidebar-title { font-size: 15px; font-weight: bold; color: #b4befe; margin-bottom: 4px; }\n"
     ".sidebar-subtitle { font-size: 11px; color: #a6adc8; margin-bottom: 12px; line-height: 1.4; }\n"
     ".event-item { background-color: #1e1e2e; border-radius: 6px; padding: 10px; margin-bottom: 8px; border-right: 4px solid #89b4fa; }\n"
@@ -482,7 +482,7 @@ create_calendar_window (PersianCalendar *calendar)
   
   win->window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title (GTK_WINDOW (win->window), "تقویم جلالی");
-  gtk_window_set_default_size (GTK_WINDOW (win->window), 650, 420);
+  gtk_window_set_default_size (GTK_WINDOW (win->window), 600, 360);
   gtk_window_set_resizable (GTK_WINDOW (win->window), FALSE);
   gtk_window_set_keep_above (GTK_WINDOW (win->window), TRUE);
   gtk_window_set_type_hint (GTK_WINDOW (win->window), GDK_WINDOW_TYPE_HINT_UTILITY);
@@ -513,6 +513,10 @@ create_calendar_window (PersianCalendar *calendar)
   gtk_style_context_add_class (header_ctx, "calendar-header");
   gtk_box_pack_start (GTK_BOX (cal_vbox), header_hbox, FALSE, FALSE, 0);
 
+  /* Force LTR direction on the header box to keep previous month on the left
+   * and next month on the right, matching standard calendar navigation. */
+  gtk_widget_set_direction (header_hbox, GTK_TEXT_DIR_LTR);
+
   GtkWidget *prev_btn = gtk_button_new_with_label ("◀");
   GtkStyleContext *prev_ctx = gtk_widget_get_style_context (prev_btn);
   gtk_style_context_add_class (prev_ctx, "nav-button");
@@ -536,23 +540,12 @@ create_calendar_window (PersianCalendar *calendar)
   GtkWidget *next_btn = gtk_button_new_with_label ("▶");
   GtkStyleContext *next_ctx = gtk_widget_get_style_context (next_btn);
   gtk_style_context_add_class (next_ctx, "nav-button");
-  gtk_box_pack_end (GTK_BOX (header_hbox), next_btn, FALSE, FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (header_hbox), next_btn, FALSE, FALSE, 0);
 
   /* Calendar grid packing */
   GtkWidget *grid_container = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
   gtk_container_set_border_width (GTK_CONTAINER (grid_container), 12);
   gtk_box_pack_start (GTK_BOX (cal_vbox), grid_container, TRUE, TRUE, 0);
-
-  /* Weekday headers row */
-  GtkWidget *wday_hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-  gtk_box_pack_start (GTK_BOX (grid_container), wday_hbox, FALSE, FALSE, 0);
-  for (int i = 0; i < 7; i++) {
-      GtkWidget *lbl = gtk_label_new (jalali_weekday_names[i]);
-      gtk_widget_set_size_request (lbl, 46, -1);
-      GtkStyleContext *lbl_ctx = gtk_widget_get_style_context (lbl);
-      gtk_style_context_add_class (lbl_ctx, "weekday-header");
-      gtk_box_pack_start (GTK_BOX (wday_hbox), lbl, TRUE, TRUE, 0);
-  }
 
   /* Grid component */
   win->grid = gtk_grid_new ();
@@ -560,32 +553,53 @@ create_calendar_window (PersianCalendar *calendar)
   gtk_grid_set_column_homogeneous (GTK_GRID (win->grid), TRUE);
   gtk_box_pack_start (GTK_BOX (grid_container), win->grid, TRUE, TRUE, 0);
 
-  /* Create cells */
+  /* Force LTR direction on the grid container so column 0 is always left and column 6 is always right,
+   * regardless of the user's GTK settings or locale. */
+  gtk_widget_set_direction (win->grid, GTK_TEXT_DIR_LTR);
+
+  /* Weekday headers row inside the grid (row 0) */
+  for (int i = 0; i < 7; i++) {
+      GtkWidget *lbl = gtk_label_new (jalali_weekday_names[i]);
+      GtkStyleContext *lbl_ctx = gtk_widget_get_style_context (lbl);
+      gtk_style_context_add_class (lbl_ctx, "weekday-header");
+      
+      /* Sat (i=0) is attached to col 6 (far right), Fri (i=6) to col 0 (far left) */
+      gtk_grid_attach (GTK_GRID (win->grid), lbl, 6 - i, 0, 1, 1);
+  }
+
+  /* Create cells and attach to rows 1 to 6 */
   for (int row = 0; row < 6; row++) {
       for (int col = 0; col < 7; col++) {
           int idx = row * 7 + col;
           DayCell *cell = &win->cells[idx];
           cell->button = create_day_cell (&cell->main_lbl, &cell->greg_lbl, &cell->hijri_lbl);
           
-          gtk_grid_attach (GTK_GRID (win->grid), cell->button, col, row, 1, 1);
+          /* Force LTR layout inside the day button as well */
+          gtk_widget_set_direction (cell->button, GTK_TEXT_DIR_LTR);
+
+          /* Attach to grid: Sat (col=0) at column 6, Fri (col=6) at column 0 */
+          gtk_grid_attach (GTK_GRID (win->grid), cell->button, 6 - col, row + 1, 1, 1);
           g_signal_connect (cell->button, "clicked", G_CALLBACK (on_day_clicked), win);
       }
   }
 
   /* Right Sidebar details panel */
   GtkWidget *sidebar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_set_size_request (sidebar, 280, -1); /* Make the events sidebar wider */
   GtkStyleContext *side_ctx = gtk_widget_get_style_context (sidebar);
   gtk_style_context_add_class (side_ctx, "sidebar");
   gtk_box_pack_end (GTK_BOX (main_hbox), sidebar, FALSE, FALSE, 0);
 
   win->details_title = gtk_label_new ("");
-  gtk_widget_set_halign (win->details_title, GTK_ALIGN_START);
+  gtk_widget_set_halign (win->details_title, GTK_ALIGN_CENTER);
+  gtk_label_set_justify (GTK_LABEL (win->details_title), GTK_JUSTIFY_CENTER);
   GtkStyleContext *dt_ctx = gtk_widget_get_style_context (win->details_title);
   gtk_style_context_add_class (dt_ctx, "sidebar-title");
   gtk_box_pack_start (GTK_BOX (sidebar), win->details_title, FALSE, FALSE, 0);
 
   win->details_date = gtk_label_new ("");
-  gtk_widget_set_halign (win->details_date, GTK_ALIGN_START);
+  gtk_widget_set_halign (win->details_date, GTK_ALIGN_CENTER);
+  gtk_label_set_justify (GTK_LABEL (win->details_date), GTK_JUSTIFY_CENTER);
   GtkStyleContext *dd_ctx = gtk_widget_get_style_context (win->details_date);
   gtk_style_context_add_class (dd_ctx, "sidebar-subtitle");
   gtk_box_pack_start (GTK_BOX (sidebar), win->details_date, FALSE, FALSE, 0);
@@ -620,8 +634,8 @@ create_calendar_window (PersianCalendar *calendar)
   win->sel_day = today.day;
 
   /* Connect signals */
-  g_signal_connect (prev_btn, "clicked", G_CALLBACK (on_prev_month_clicked), win);
-  g_signal_connect (next_btn, "clicked", G_CALLBACK (on_next_month_clicked), win);
+  g_signal_connect (prev_btn, "clicked", G_CALLBACK (on_next_month_clicked), win);
+  g_signal_connect (next_btn, "clicked", G_CALLBACK (on_prev_month_clicked), win);
 
   g_signal_connect (win->window, "destroy", G_CALLBACK (on_window_destroy), calendar);
   g_signal_connect_data (win->window, "destroy", G_CALLBACK (g_free), win, NULL, 0);
