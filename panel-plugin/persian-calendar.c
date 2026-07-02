@@ -28,6 +28,10 @@ enum {
 #define PROP_DISPLAY_FORMAT "/displayFormat"
 #define PROP_CUSTOM_FONT    "/customFont"
 #define PROP_CUSTOM_FORMAT  "/customFormat"
+#define PROP_HOLIDAY_COLOR  "/holidayColor"
+#define DEFAULT_HOLIDAY_COLOR "#f38ba8"
+#define PROP_NORMAL_COLOR   "/normalColor"
+#define DEFAULT_NORMAL_COLOR "#cdd6f4"
 
 static const char *preset_formats[FORMAT_CUSTOM] = {
   "%d %B",          /* FORMAT_DAY_MONTH */
@@ -54,6 +58,8 @@ struct _PersianCalendar
   int display_format;
   gchar *custom_font;    /* Pango font description string */
   gchar *custom_format;  /* Custom format string, e.g. "%A %d %B %Y" */
+  gchar *holiday_color;  /* Hex color string for holidays, e.g. "#f38ba8" */
+  gchar *normal_color;   /* Hex color string for normal days, e.g. "#cdd6f4" */
 
   /* state */
   gint64 last_destroy_time; /* Monotonic time of last destroy in ms */
@@ -287,7 +293,7 @@ calendar_window_update_details (CalendarWindow *win)
 
   /* Lunar events */
   const CalendarEvent *lunar_out[8];
-  int lunar_cnt = find_events (lunar_events, lunar_events_count, hd.month, hd.day, lunar_out, 8);
+  int lunar_cnt = find_lunar_events (hd.month, hd.day, hijri_days_in_month (hd.year, hd.month), lunar_out, 8);
   for (int i = 0; i < lunar_cnt; i++) {
       add_event_widget (win->events_list_box, lunar_out[i]->title, lunar_out[i]->holiday, "قمری");
       total_events++;
@@ -427,7 +433,7 @@ calendar_window_render (CalendarWindow *win)
       }
 
       const CalendarEvent *lunar_out[8];
-      int lunar_cnt = find_events (lunar_events, lunar_events_count, c_hd.month, c_hd.day, lunar_out, 8);
+      int lunar_cnt = find_lunar_events (c_hd.month, c_hd.day, hijri_days_in_month (c_hd.year, c_hd.month), lunar_out, 8);
       for (int k = 0; k < lunar_cnt; k++) {
           if (lunar_out[k]->holiday) cell->is_holiday = TRUE;
       }
@@ -964,6 +970,49 @@ persian_calendar_update_label (gpointer user_data)
 
   build_panel_label_text (calendar, jd, hd, gy, gm, gd);
 
+  /* Calculate if today is holiday */
+  gboolean today_is_holiday = FALSE;
+  if (jd.weekday == 6) { /* Friday is weekend holiday in Iran */
+    today_is_holiday = TRUE;
+  } else {
+    const CalendarEvent *solar_out[8];
+    int solar_cnt = find_events (solar_events, solar_events_count, jd.month, jd.day, solar_out, 8);
+    for (int k = 0; k < solar_cnt; k++) {
+        if (solar_out[k]->holiday) today_is_holiday = TRUE;
+    }
+
+    const CalendarEvent *lunar_out[8];
+    int lunar_cnt = find_lunar_events (hd.month, hd.day, hijri_days_in_month (hd.year, hd.month), lunar_out, 8);
+    for (int k = 0; k < lunar_cnt; k++) {
+        if (lunar_out[k]->holiday) today_is_holiday = TRUE;
+    }
+
+    const CalendarEvent *greg_out[8];
+    int greg_cnt = find_events (gregorian_events, gregorian_events_count, gm, gd, greg_out, 8);
+    for (int k = 0; k < greg_cnt; k++) {
+        if (greg_out[k]->holiday) today_is_holiday = TRUE;
+    }
+  }
+
+  GtkStyleContext *ctx = gtk_widget_get_style_context (calendar->label);
+  GtkCssProvider *provider = g_object_get_data (G_OBJECT (calendar->label), "color-provider");
+
+  if (provider != NULL) {
+    gtk_style_context_remove_provider (ctx, GTK_STYLE_PROVIDER (provider));
+    g_object_set_data (G_OBJECT (calendar->label), "color-provider", NULL);
+  }
+
+  const char *color_str = today_is_holiday ?
+    ((calendar->holiday_color != NULL && calendar->holiday_color[0] != '\0') ? calendar->holiday_color : DEFAULT_HOLIDAY_COLOR) :
+    ((calendar->normal_color != NULL && calendar->normal_color[0] != '\0') ? calendar->normal_color : DEFAULT_NORMAL_COLOR);
+
+  gchar *css = g_strdup_printf ("label { color: %s; }", color_str);
+  provider = gtk_css_provider_new ();
+  gtk_css_provider_load_from_data (provider, css, -1, NULL);
+  gtk_style_context_add_provider (ctx, GTK_STYLE_PROVIDER (provider), GTK_STYLE_PROVIDER_PRIORITY_USER);
+  g_object_set_data_full (G_OBJECT (calendar->label), "color-provider", provider, g_object_unref);
+  g_free (css);
+
   /* Hover Tooltip format: full details of Solar, Gregorian, and Hijri dates */
   char day_buf[16];
   to_persian_digits (jd.day, day_buf, sizeof (day_buf));
@@ -1076,6 +1125,20 @@ on_xfconf_property_changed (XfconfChannel *channel, gchar *property, GValue *val
       calendar->custom_font = (font != NULL && font[0] != '\0') ? g_strdup (font) : NULL;
       apply_label_font (calendar);
     }
+  } else if (g_str_has_suffix (property, PROP_HOLIDAY_COLOR)) {
+    if (G_VALUE_HOLDS_STRING (value)) {
+      const gchar *color = g_value_get_string (value);
+      g_free (calendar->holiday_color);
+      calendar->holiday_color = (color != NULL && color[0] != '\0') ? g_strdup (color) : g_strdup (DEFAULT_HOLIDAY_COLOR);
+      persian_calendar_update_label (calendar);
+    }
+  } else if (g_str_has_suffix (property, PROP_NORMAL_COLOR)) {
+    if (G_VALUE_HOLDS_STRING (value)) {
+      const gchar *color = g_value_get_string (value);
+      g_free (calendar->normal_color);
+      calendar->normal_color = (color != NULL && color[0] != '\0') ? g_strdup (color) : g_strdup (DEFAULT_NORMAL_COLOR);
+      persian_calendar_update_label (calendar);
+    }
   }
 }
 
@@ -1107,6 +1170,32 @@ on_configure_response (GtkDialog *dialog, gint response, gpointer user_data)
       calendar->custom_font = (font_name != NULL && font_name[0] != '\0') ? g_strdup (font_name) : NULL;
       apply_label_font (calendar);
       g_free (font_name);
+    }
+
+    GtkWidget *normal_btn = g_object_get_data (G_OBJECT (dialog), "normal-btn");
+    if (normal_btn != NULL) {
+      GdkRGBA rgba;
+      gtk_color_chooser_get_rgba (GTK_COLOR_CHOOSER (normal_btn), &rgba);
+      gchar *color_str = g_strdup_printf ("#%02x%02x%02x",
+                                          (int) (rgba.red * 255.0 + 0.5),
+                                          (int) (rgba.green * 255.0 + 0.5),
+                                          (int) (rgba.blue * 255.0 + 0.5));
+      xfconf_channel_set_string (calendar->channel, PROP_NORMAL_COLOR, color_str);
+      g_free (calendar->normal_color);
+      calendar->normal_color = color_str;
+    }
+
+    GtkWidget *color_btn = g_object_get_data (G_OBJECT (dialog), "color-btn");
+    if (color_btn != NULL) {
+      GdkRGBA rgba;
+      gtk_color_chooser_get_rgba (GTK_COLOR_CHOOSER (color_btn), &rgba);
+      gchar *color_str = g_strdup_printf ("#%02x%02x%02x",
+                                          (int) (rgba.red * 255.0 + 0.5),
+                                          (int) (rgba.green * 255.0 + 0.5),
+                                          (int) (rgba.blue * 255.0 + 0.5));
+      xfconf_channel_set_string (calendar->channel, PROP_HOLIDAY_COLOR, color_str);
+      g_free (calendar->holiday_color);
+      calendar->holiday_color = color_str;
     }
 
     persian_calendar_update_label (calendar);
@@ -1153,7 +1242,8 @@ persian_calendar_configure_dialog (XfcePanelPlugin *plugin)
   GtkWidget *vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
   gtk_box_pack_start (GTK_BOX (content), vbox, TRUE, TRUE, 0);
 
-  GtkWidget *label = gtk_label_new ("نحوه نمایش تاریخ در پنل:");
+  GtkWidget *label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (label), "<span size=\"large\"><b>نحوه نمایش تاریخ در پنل:</b></span>");
   gtk_widget_set_halign (label, GTK_ALIGN_START);
   gtk_widget_set_direction (label, GTK_TEXT_DIR_RTL);
   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
@@ -1177,7 +1267,8 @@ persian_calendar_configure_dialog (XfcePanelPlugin *plugin)
   g_object_set_data (G_OBJECT (dialog), "format-combo", combo);
 
   /* Custom Format Entry */
-  GtkWidget *entry_label = gtk_label_new ("فرمت سفارشی (فقط در حالت قالب سفارشی فعال است):");
+  GtkWidget *entry_label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (entry_label), "<span size=\"large\"><b>فرمت سفارشی:</b></span> <small>(فقط در حالت قالب سفارشی فعال است)</small>");
   gtk_widget_set_halign (entry_label, GTK_ALIGN_START);
   gtk_widget_set_direction (entry_label, GTK_TEXT_DIR_RTL);
   gtk_box_pack_start (GTK_BOX (vbox), entry_label, FALSE, FALSE, 0);
@@ -1218,7 +1309,8 @@ persian_calendar_configure_dialog (XfcePanelPlugin *plugin)
   on_format_combo_changed (GTK_COMBO_BOX (combo), entry);
 
   /* Font selection */
-  GtkWidget *font_label = gtk_label_new ("فونت و اندازه متن پنل:");
+  GtkWidget *font_label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (font_label), "<span size=\"large\"><b>فونت و اندازه متن پنل:</b></span>");
   gtk_widget_set_halign (font_label, GTK_ALIGN_START);
   gtk_widget_set_direction (font_label, GTK_TEXT_DIR_RTL);
   gtk_box_pack_start (GTK_BOX (vbox), font_label, FALSE, FALSE, 0);
@@ -1235,6 +1327,42 @@ persian_calendar_configure_dialog (XfcePanelPlugin *plugin)
   gtk_box_pack_start (GTK_BOX (vbox), font_btn, FALSE, FALSE, 0);
 
   g_object_set_data (G_OBJECT (dialog), "font-btn", font_btn);
+
+  /* Normal day color selection */
+  GtkWidget *normal_label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (normal_label), "<span size=\"large\"><b>رنگ روزهای عادی:</b></span>");
+  gtk_widget_set_halign (normal_label, GTK_ALIGN_START);
+  gtk_widget_set_direction (normal_label, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), normal_label, FALSE, FALSE, 0);
+
+  GtkWidget *normal_btn = gtk_color_button_new ();
+  gtk_widget_set_direction (normal_btn, GTK_TEXT_DIR_RTL);
+  GdkRGBA rgba_normal;
+  const char *curr_normal = (calendar->normal_color != NULL && calendar->normal_color[0] != '\0') ? calendar->normal_color : DEFAULT_NORMAL_COLOR;
+  if (gdk_rgba_parse (&rgba_normal, curr_normal)) {
+    gtk_color_chooser_set_rgba (GTK_COLOR_CHOOSER (normal_btn), &rgba_normal);
+  }
+  gtk_box_pack_start (GTK_BOX (vbox), normal_btn, FALSE, FALSE, 0);
+
+  g_object_set_data (G_OBJECT (dialog), "normal-btn", normal_btn);
+
+  /* Holiday color selection */
+  GtkWidget *color_label = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (color_label), "<span size=\"large\"><b>رنگ روزهای تعطیل:</b></span>");
+  gtk_widget_set_halign (color_label, GTK_ALIGN_START);
+  gtk_widget_set_direction (color_label, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), color_label, FALSE, FALSE, 0);
+
+  GtkWidget *color_btn = gtk_color_button_new ();
+  gtk_widget_set_direction (color_btn, GTK_TEXT_DIR_RTL);
+  GdkRGBA rgba;
+  const char *curr_color = (calendar->holiday_color != NULL && calendar->holiday_color[0] != '\0') ? calendar->holiday_color : DEFAULT_HOLIDAY_COLOR;
+  if (gdk_rgba_parse (&rgba, curr_color)) {
+    gtk_color_chooser_set_rgba (GTK_COLOR_CHOOSER (color_btn), &rgba);
+  }
+  gtk_box_pack_start (GTK_BOX (vbox), color_btn, FALSE, FALSE, 0);
+
+  g_object_set_data (G_OBJECT (dialog), "color-btn", color_btn);
 
   g_signal_connect (dialog, "response", G_CALLBACK (on_configure_response), calendar);
 
@@ -1253,6 +1381,8 @@ persian_calendar_construct (XfcePanelPlugin *plugin)
   calendar->display_format = FORMAT_DAY_MONTH;
   calendar->custom_font = NULL;
   calendar->custom_format = NULL;
+  calendar->holiday_color = NULL;
+  calendar->normal_color = NULL;
   calendar->last_destroy_time = 0;
 
   /* Initialize Xfconf */
@@ -1277,11 +1407,29 @@ persian_calendar_construct (XfcePanelPlugin *plugin)
       calendar->custom_format = g_strdup ("%d %B");
     }
 
+    gchar *color = xfconf_channel_get_string (calendar->channel, PROP_HOLIDAY_COLOR, NULL);
+    if (color != NULL && color[0] != '\0') {
+      calendar->holiday_color = color;
+    } else {
+      g_free (color);
+      calendar->holiday_color = g_strdup (DEFAULT_HOLIDAY_COLOR);
+    }
+
+    gchar *normal_c = xfconf_channel_get_string (calendar->channel, PROP_NORMAL_COLOR, NULL);
+    if (normal_c != NULL && normal_c[0] != '\0') {
+      calendar->normal_color = normal_c;
+    } else {
+      g_free (normal_c);
+      calendar->normal_color = g_strdup (DEFAULT_NORMAL_COLOR);
+    }
+
     g_signal_connect (calendar->channel, "property-changed",
                       G_CALLBACK (on_xfconf_property_changed), calendar);
   } else {
     calendar->channel = NULL;
     calendar->custom_format = g_strdup ("%d %B");
+    calendar->holiday_color = g_strdup (DEFAULT_HOLIDAY_COLOR);
+    calendar->normal_color = g_strdup (DEFAULT_NORMAL_COLOR);
   }
 
   /* Create and style label */
@@ -1337,6 +1485,10 @@ persian_calendar_free_data (XfcePanelPlugin *plugin)
   calendar->custom_font = NULL;
   g_free (calendar->custom_format);
   calendar->custom_format = NULL;
+  g_free (calendar->holiday_color);
+  calendar->holiday_color = NULL;
+  g_free (calendar->normal_color);
+  calendar->normal_color = NULL;
 }
 
 static void
@@ -1348,6 +1500,8 @@ persian_calendar_init (PersianCalendar *calendar)
   calendar->display_format = FORMAT_DAY_MONTH;
   calendar->custom_font = NULL;
   calendar->custom_format = NULL;
+  calendar->holiday_color = NULL;
+  calendar->normal_color = NULL;
   calendar->last_destroy_time = 0;
 }
 

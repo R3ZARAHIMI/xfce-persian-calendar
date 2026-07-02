@@ -288,3 +288,19 @@ int find_events(const CalendarEvent *arr, int arr_count,
     }
     return found;
 }
+
+int find_lunar_events(int month, int day, int days_in_month,
+                       const CalendarEvent **out, int max_out) {
+    int found = 0;
+    for (int i = 0; i < lunar_events_count && found < max_out; i++) {
+        if (lunar_events[i].month != month)
+            continue;
+        int ev_day = lunar_events[i].day;
+        /* مناسبت روز ۳۰ در ماه ۲۹ روزه، روی آخرین روز ماه (۲۹) می‌افتد */
+        if (ev_day == 30 && days_in_month < 30)
+            ev_day = days_in_month;
+        if (ev_day == day)
+            out[found++] = &lunar_events[i];
+    }
+    return found;
+}
