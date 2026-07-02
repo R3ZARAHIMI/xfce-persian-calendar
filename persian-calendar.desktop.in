@@ -4,6 +4,6 @@ Name=Persian Calendar
 Name[fa]=تقویم جلالی
 Comment=A simple Persian/Jalali calendar plugin
 Comment[fa]=یک افزونه ساده تقویم جلالی/فارسی
-Icon=office-calendar
+Icon=persian-calendar
 X-XFCE-Module=persian-calendar
 X-XFCE-API=2.0

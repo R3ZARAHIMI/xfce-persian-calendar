@@ -33,6 +33,10 @@ enum {
 #define PROP_NORMAL_COLOR   "/normalColor"
 #define DEFAULT_NORMAL_COLOR "#cdd6f4"
 
+#ifndef DATADIR
+#define DATADIR "/usr/share"
+#endif
+
 static const char *preset_formats[FORMAT_CUSTOM] = {
   "%d %B",          /* FORMAT_DAY_MONTH */
   "%d %B %Y",       /* FORMAT_DAY_MONTH_YEAR */
@@ -766,6 +770,8 @@ apply_label_font (PersianCalendar *calendar)
     pango_font_description_free (font_desc);
   }
 }
+
+
 
 /* Helper to format dynamic date values using custom string specifiers */
 static void
