@@ -1,12 +1,45 @@
 #include <gtk/gtk.h>
 #include <libxfce4panel/libxfce4panel.h>
 #include <libxfce4ui/libxfce4ui.h>
+#include <xfconf/xfconf.h>
 #include "../jalali.h"
 #include "../hijri.h"
 #include "../events_data.h"
 
 #define PERSIAN_TYPE_CALENDAR (persian_calendar_get_type())
 G_DECLARE_FINAL_TYPE (PersianCalendar, persian_calendar, PERSIAN, CALENDAR, XfcePanelPlugin)
+
+/* Display format options for the panel label */
+enum {
+  FORMAT_DAY_MONTH = 0,       /* "۱۲ تیر" */
+  FORMAT_DAY_MONTH_YEAR,     /* "۱۲ تیر ۱۴۰۴" */
+  FORMAT_WEEKDAY_DAY_MONTH,  /* "شنبه ۱۲ تیر" */
+  FORMAT_WEEKDAY_DAY_MONTH_YEAR, /* "شنبه ۹ تیر ۱۴۰۵" */
+  FORMAT_JALALI_HIJRI,       /* "۱۲ تیر | ۵ محرم" */
+  FORMAT_DAY_ONLY,           /* "۱۲" */
+  FORMAT_MONTH_ONLY,         /* "تیر" */
+  FORMAT_FULL_DATES,         /* "۱۲ تیر ۱۴۰۴ | 1 Jul 2024" */
+  FORMAT_NUMERIC_DAY_MONTH,  /* "۱۱-۰۴" */
+  FORMAT_CUSTOM,             /* سفارشی (قالب دلخواه) */
+  FORMAT_COUNT
+};
+
+#define XFCONF_CHANNEL_NAME "persian-calendar"
+#define PROP_DISPLAY_FORMAT "/displayFormat"
+#define PROP_CUSTOM_FONT    "/customFont"
+#define PROP_CUSTOM_FORMAT  "/customFormat"
+
+static const char *preset_formats[FORMAT_CUSTOM] = {
+  "%d %B",          /* FORMAT_DAY_MONTH */
+  "%d %B %Y",       /* FORMAT_DAY_MONTH_YEAR */
+  "%A %d %B",       /* FORMAT_WEEKDAY_DAY_MONTH */
+  "%A %d %B %Y",    /* FORMAT_WEEKDAY_DAY_MONTH_YEAR */
+  "%d %B | %hd %hB",/* FORMAT_JALALI_HIJRI */
+  "%d",             /* FORMAT_DAY_ONLY */
+  "%B",             /* FORMAT_MONTH_ONLY */
+  "%d %B %Y | %gd %gB %gY", /* FORMAT_FULL_DATES */
+  "%m-%d"           /* FORMAT_NUMERIC_DAY_MONTH */
+};
 
 struct _PersianCalendar
 {
@@ -15,6 +48,15 @@ struct _PersianCalendar
   /* plugin widgets */
   GtkWidget *label;
   GtkWidget *window; /* Pointer to the open calendar window, or NULL */
+
+  /* settings */
+  XfconfChannel *channel;
+  int display_format;
+  gchar *custom_font;    /* Pango font description string */
+  gchar *custom_format;  /* Custom format string, e.g. "%A %d %B %Y" */
+
+  /* state */
+  gint64 last_destroy_time; /* Monotonic time of last destroy in ms */
 };
 
 /* Struct for each day cell in the calendar grid */
@@ -469,7 +511,20 @@ on_window_destroy (GtkWidget *widget, gpointer user_data)
 {
   (void)widget;
   PersianCalendar *calendar = PERSIAN_CALENDAR (user_data);
+  calendar->last_destroy_time = g_get_monotonic_time () / 1000;
   calendar->window = NULL;
+}
+
+/* Callback when window loses focus to auto-close it */
+static gboolean
+on_window_focus_out (GtkWidget *widget, GdkEventFocus *event, gpointer user_data)
+{
+  (void)event;
+  PersianCalendar *calendar = PERSIAN_CALENDAR (user_data);
+  if (calendar->window == widget) {
+      gtk_widget_destroy (widget);
+  }
+  return FALSE;
 }
 
 /* Create the premium calendar popup dialog */
@@ -638,15 +693,258 @@ create_calendar_window (PersianCalendar *calendar)
   g_signal_connect (next_btn, "clicked", G_CALLBACK (on_prev_month_clicked), win);
 
   g_signal_connect (win->window, "destroy", G_CALLBACK (on_window_destroy), calendar);
-  g_signal_connect_data (win->window, "destroy", G_CALLBACK (g_free), win, NULL, 0);
+  g_signal_connect_data (win->window, "destroy", G_CALLBACK (g_free), win, NULL, G_CONNECT_SWAPPED);
+  g_signal_connect (win->window, "focus-out-event", G_CALLBACK (on_window_focus_out), calendar);
 
   /* Initial rendering */
   calendar_window_render (win);
   calendar_window_update_details (win);
 
   gtk_widget_show_all (win->window);
+  gtk_window_present (GTK_WINDOW (win->window));
 
   return win->window;
+}
+
+/* Apply the custom font to the panel label */
+static void
+apply_label_font (PersianCalendar *calendar)
+{
+  PangoFontDescription *font_desc = NULL;
+
+  if (calendar->custom_font != NULL && calendar->custom_font[0] != '\0') {
+    font_desc = pango_font_description_from_string (calendar->custom_font);
+  }
+
+  GtkStyleContext *ctx = gtk_widget_get_style_context (calendar->label);
+  GtkCssProvider *provider = g_object_get_data (G_OBJECT (calendar->label), "font-provider");
+
+  if (provider != NULL) {
+    gtk_style_context_remove_provider (ctx, GTK_STYLE_PROVIDER (provider));
+    g_object_set_data (G_OBJECT (calendar->label), "font-provider", NULL);
+  }
+
+  if (font_desc != NULL) {
+    const gchar *family = pango_font_description_get_family (font_desc);
+    gint size = pango_font_description_get_size (font_desc);
+    gboolean size_is_absolute = pango_font_description_get_size_is_absolute (font_desc);
+    PangoWeight weight = pango_font_description_get_weight (font_desc);
+    PangoStyle style = pango_font_description_get_style (font_desc);
+
+    if (family == NULL) family = "sans-serif";
+    if (size <= 0) {
+      size = 14 * PANGO_SCALE;
+      size_is_absolute = FALSE;
+    }
+
+    const char *style_str = "normal";
+    if (style == PANGO_STYLE_ITALIC) {
+      style_str = "italic";
+    } else if (style == PANGO_STYLE_OBLIQUE) {
+      style_str = "oblique";
+    }
+
+    gchar *css;
+    int size_val = size / PANGO_SCALE;
+    const char *size_unit = size_is_absolute ? "px" : "pt";
+
+    css = g_strdup_printf ("label { font-family: '%s'; font-size: %d%s; font-weight: %d; font-style: %s; }",
+                           family, size_val, size_unit, (int)weight, style_str);
+
+    provider = gtk_css_provider_new ();
+    gtk_css_provider_load_from_data (provider, css, -1, NULL);
+    gtk_style_context_add_provider (ctx, GTK_STYLE_PROVIDER (provider),
+                                     GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_set_data_full (G_OBJECT (calendar->label), "font-provider", provider, g_object_unref);
+    g_free (css);
+    pango_font_description_free (font_desc);
+  }
+}
+
+/* Helper to format dynamic date values using custom string specifiers */
+static void
+format_date_string (const gchar *format, char *out_buf, int out_len,
+                    JalaliDate *jd, HijriDate *hd, int gy, int gm, int gd)
+{
+  char *p = out_buf;
+  char *end = out_buf + out_len - 1;
+  const gchar *f = format;
+
+  while (*f != '\0' && p < end)
+    {
+      if (*f == '%' && *(f + 1) != '\0')
+        {
+          f++; /* skip '%' */
+          char val_buf[128] = "";
+
+          if (*f == 'd')
+            {
+              to_persian_digits (jd->day, val_buf, sizeof (val_buf));
+            }
+          else if (*f == 'm')
+            {
+              to_persian_digits (jd->month, val_buf, sizeof (val_buf));
+            }
+          else if (*f == 'B')
+            {
+              g_strlcpy (val_buf, jalali_month_names[jd->month - 1], sizeof (val_buf));
+            }
+          else if (*f == 'Y')
+            {
+              to_persian_digits (jd->year, val_buf, sizeof (val_buf));
+            }
+          else if (*f == 'y')
+            {
+              to_persian_digits (jd->year % 100, val_buf, sizeof (val_buf));
+            }
+          else if (*f == 'A')
+            {
+              g_strlcpy (val_buf, jalali_weekday_names[jd->weekday], sizeof (val_buf));
+            }
+          else if (*f == 'h' && *(f + 1) != '\0')
+            {
+              f++; /* skip 'h' */
+              if (*f == 'd')
+                {
+                  to_persian_digits (hd->day, val_buf, sizeof (val_buf));
+                }
+              else if (*f == 'B')
+                {
+                  g_strlcpy (val_buf, hijri_month_names[hd->month - 1], sizeof (val_buf));
+                }
+              else if (*f == 'Y')
+                {
+                  to_persian_digits (hd->year, val_buf, sizeof (val_buf));
+                }
+              else
+                {
+                  g_snprintf (val_buf, sizeof (val_buf), "%%h%c", *f);
+                }
+            }
+          else if (*f == 'g' && *(f + 1) != '\0')
+            {
+              f++; /* skip 'g' */
+              if (*f == 'd')
+                {
+                  g_snprintf (val_buf, sizeof (val_buf), "%d", gd);
+                }
+              else if (*f == 'B')
+                {
+                  g_strlcpy (val_buf, greg_month_names[gm - 1], sizeof (val_buf));
+                }
+              else if (*f == 'Y')
+                {
+                  g_snprintf (val_buf, sizeof (val_buf), "%d", gy);
+                }
+              else
+                {
+                  g_snprintf (val_buf, sizeof (val_buf), "%%g%c", *f);
+                }
+            }
+          else if (*f == '%')
+            {
+              val_buf[0] = '%';
+              val_buf[1] = '\0';
+            }
+          else
+            {
+              g_snprintf (val_buf, sizeof (val_buf), "%%%c", *f);
+            }
+
+          int val_len = strlen (val_buf);
+          if (p + val_len < end)
+            {
+              strcpy (p, val_buf);
+              p += val_len;
+            }
+          f++;
+        }
+      else
+        {
+          *p++ = *f++;
+        }
+    }
+  *p = '\0';
+}
+
+/* Build the panel label text based on the selected display format */
+static void
+build_panel_label_text (PersianCalendar *calendar, JalaliDate jd, HijriDate hd, int gy, int gm, int gd)
+{
+  char day_buf[16];
+  to_persian_digits (jd.day, day_buf, sizeof (day_buf));
+
+  char year_buf[16];
+  to_persian_digits (jd.year, year_buf, sizeof (year_buf));
+
+  char hd_day_p[16];
+  to_persian_digits (hd.day, hd_day_p, sizeof (hd_day_p));
+
+  char label_text[256];
+  label_text[0] = '\0';
+
+  switch (calendar->display_format) {
+    case FORMAT_DAY_MONTH_YEAR:
+      g_snprintf (label_text, sizeof (label_text), "%s %s %s",
+                  day_buf, jalali_month_names[jd.month - 1], year_buf);
+      break;
+    case FORMAT_WEEKDAY_DAY_MONTH:
+      g_snprintf (label_text, sizeof (label_text), "%s %s %s",
+                  jalali_weekday_names[jd.weekday], day_buf, jalali_month_names[jd.month - 1]);
+      break;
+    case FORMAT_WEEKDAY_DAY_MONTH_YEAR:
+      g_snprintf (label_text, sizeof (label_text), "%s %s %s %s",
+                  jalali_weekday_names[jd.weekday], day_buf, jalali_month_names[jd.month - 1], year_buf);
+      break;
+    case FORMAT_JALALI_HIJRI:
+      g_snprintf (label_text, sizeof (label_text), "%s %s | %s %s",
+                  day_buf, jalali_month_names[jd.month - 1],
+                  hd_day_p, hijri_month_names[hd.month - 1]);
+      break;
+    case FORMAT_DAY_ONLY:
+      g_snprintf (label_text, sizeof (label_text), "%s", day_buf);
+      break;
+    case FORMAT_MONTH_ONLY:
+      g_snprintf (label_text, sizeof (label_text), "%s", jalali_month_names[jd.month - 1]);
+      break;
+    case FORMAT_FULL_DATES:
+      g_snprintf (label_text, sizeof (label_text), "%s %s %s | %d %s %d",
+                  day_buf, jalali_month_names[jd.month - 1], year_buf,
+                  gd, greg_month_names[gm - 1], gy);
+      break;
+    case FORMAT_NUMERIC_DAY_MONTH:
+      {
+        char m_buf[8];
+        to_persian_digits (jd.month, m_buf, sizeof (m_buf));
+        char day_padded[16], mon_padded[16];
+        if (jd.day < 10)
+          g_snprintf (day_padded, sizeof (day_padded), "۰%s", day_buf);
+        else
+          g_strlcpy (day_padded, day_buf, sizeof (day_padded));
+        if (jd.month < 10)
+          g_snprintf (mon_padded, sizeof (mon_padded), "۰%s", m_buf);
+        else
+          g_strlcpy (mon_padded, m_buf, sizeof (mon_padded));
+        /* Swap month and day in C memory so RTL rendering displays day-month on screen */
+        g_snprintf (label_text, sizeof (label_text), "%s-%s", mon_padded, day_padded);
+      }
+      break;
+    case FORMAT_CUSTOM:
+      if (calendar->custom_format != NULL && calendar->custom_format[0] != '\0') {
+        format_date_string (calendar->custom_format, label_text, sizeof (label_text), &jd, &hd, gy, gm, gd);
+      } else {
+        format_date_string ("%d %B", label_text, sizeof (label_text), &jd, &hd, gy, gm, gd);
+      }
+      break;
+    case FORMAT_DAY_MONTH:
+    default:
+      g_snprintf (label_text, sizeof (label_text), "%s %s", day_buf, jalali_month_names[jd.month - 1]);
+      break;
+  }
+
+  /* Render text natively in RTL */
+  gtk_widget_set_direction (calendar->label, GTK_TEXT_DIR_RTL);
+  gtk_label_set_text (GTK_LABEL (calendar->label), label_text);
 }
 
 /* Update the panel label and plugin tooltip periodically */
@@ -664,15 +962,12 @@ persian_calendar_update_label (gpointer user_data)
   JalaliDate jd = gregorian_to_jalali (gy, gm, gd);
   HijriDate hd = gregorian_to_hijri (gy, gm, gd);
 
-  /* Panel Text format: "۱۲ تیر" */
+  build_panel_label_text (calendar, jd, hd, gy, gm, gd);
+
+  /* Hover Tooltip format: full details of Solar, Gregorian, and Hijri dates */
   char day_buf[16];
   to_persian_digits (jd.day, day_buf, sizeof (day_buf));
 
-  char label_text[128];
-  g_snprintf (label_text, sizeof (label_text), "%s %s", day_buf, jalali_month_names[jd.month - 1]);
-  gtk_label_set_text (GTK_LABEL (calendar->label), label_text);
-
-  /* Hover Tooltip format: full details of Solar, Gregorian, and Hijri dates */
   char year_buf[16];
   to_persian_digits (jd.year, year_buf, sizeof (year_buf));
   
@@ -739,12 +1034,211 @@ persian_calendar_button_press (GtkWidget      *widget,
         }
       else
         {
-          calendar->window = create_calendar_window (calendar);
+          gint64 now_ms = g_get_monotonic_time () / 1000;
+          /* Avoid recreating window if it was just closed via focus-out on the button */
+          if (now_ms - calendar->last_destroy_time > 250)
+            {
+              calendar->window = create_calendar_window (calendar);
+            }
         }
       return TRUE;
     }
 
   return FALSE; /* Let panel handle other events (e.g. right-click menu) */
+}
+
+/* Callback when xfconf property changes */
+static void
+on_xfconf_property_changed (XfconfChannel *channel, gchar *property, GValue *value, gpointer user_data)
+{
+  PersianCalendar *calendar = PERSIAN_CALENDAR (user_data);
+  (void)channel;
+
+  if (g_str_has_suffix (property, PROP_DISPLAY_FORMAT)) {
+    if (G_VALUE_HOLDS_INT (value)) {
+      int fmt = g_value_get_int (value);
+      if (fmt >= 0 && fmt < FORMAT_COUNT) {
+        calendar->display_format = fmt;
+        persian_calendar_update_label (calendar);
+      }
+    }
+  } else if (g_str_has_suffix (property, PROP_CUSTOM_FORMAT)) {
+    if (G_VALUE_HOLDS_STRING (value)) {
+      const gchar *fmt = g_value_get_string (value);
+      g_free (calendar->custom_format);
+      calendar->custom_format = (fmt != NULL && fmt[0] != '\0') ? g_strdup (fmt) : g_strdup ("%d %B");
+      persian_calendar_update_label (calendar);
+    }
+  } else if (g_str_has_suffix (property, PROP_CUSTOM_FONT)) {
+    if (G_VALUE_HOLDS_STRING (value)) {
+      const gchar *font = g_value_get_string (value);
+      g_free (calendar->custom_font);
+      calendar->custom_font = (font != NULL && font[0] != '\0') ? g_strdup (font) : NULL;
+      apply_label_font (calendar);
+    }
+  }
+}
+
+/* Configure dialog response handler */
+static void
+on_configure_response (GtkDialog *dialog, gint response, gpointer user_data)
+{
+  PersianCalendar *calendar = PERSIAN_CALENDAR (user_data);
+
+  if (response == GTK_RESPONSE_OK) {
+    GtkWidget *combo = g_object_get_data (G_OBJECT (dialog), "format-combo");
+    int fmt = gtk_combo_box_get_active (GTK_COMBO_BOX (combo));
+    calendar->display_format = fmt;
+    xfconf_channel_set_int (calendar->channel, PROP_DISPLAY_FORMAT, fmt);
+
+    GtkWidget *entry = g_object_get_data (G_OBJECT (dialog), "format-entry");
+    if (entry != NULL) {
+      const gchar *fmt_str = gtk_entry_get_text (GTK_ENTRY (entry));
+      xfconf_channel_set_string (calendar->channel, PROP_CUSTOM_FORMAT, fmt_str != NULL ? fmt_str : "");
+      g_free (calendar->custom_format);
+      calendar->custom_format = (fmt_str != NULL && fmt_str[0] != '\0') ? g_strdup (fmt_str) : g_strdup ("%d %B");
+    }
+
+    GtkWidget *font_btn = g_object_get_data (G_OBJECT (dialog), "font-btn");
+    if (font_btn != NULL) {
+      gchar *font_name = gtk_font_chooser_get_font (GTK_FONT_CHOOSER (font_btn));
+      xfconf_channel_set_string (calendar->channel, PROP_CUSTOM_FONT, font_name != NULL ? font_name : "");
+      g_free (calendar->custom_font);
+      calendar->custom_font = (font_name != NULL && font_name[0] != '\0') ? g_strdup (font_name) : NULL;
+      apply_label_font (calendar);
+      g_free (font_name);
+    }
+
+    persian_calendar_update_label (calendar);
+  }
+  gtk_widget_destroy (GTK_WIDGET (dialog));
+}
+
+/* Callback when display format combo changed to toggle sensitivity and fill custom entry */
+static void
+on_format_combo_changed (GtkComboBox *combo, gpointer user_data)
+{
+  GtkWidget *entry = GTK_WIDGET (user_data);
+  int active = gtk_combo_box_get_active (combo);
+
+  if (active == FORMAT_CUSTOM) {
+    gtk_widget_set_sensitive (entry, TRUE);
+  } else {
+    gtk_widget_set_sensitive (entry, FALSE);
+    if (active >= 0 && active < FORMAT_CUSTOM) {
+      gtk_entry_set_text (GTK_ENTRY (entry), preset_formats[active]);
+    }
+  }
+}
+
+/* Show the settings dialog */
+static void
+persian_calendar_configure_dialog (XfcePanelPlugin *plugin)
+{
+  PersianCalendar *calendar = PERSIAN_CALENDAR (plugin);
+
+  GtkWidget *dialog = gtk_dialog_new_with_buttons (
+    "تنظیمات تقویم جلالی",
+    GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (plugin))),
+    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+    "انصراف", GTK_RESPONSE_CANCEL,
+    "تایید", GTK_RESPONSE_OK,
+    NULL);
+  gtk_window_set_default_size (GTK_WINDOW (dialog), 380, 390);
+  gtk_widget_set_direction (dialog, GTK_TEXT_DIR_RTL);
+
+  GtkWidget *content = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+  gtk_container_set_border_width (GTK_CONTAINER (content), 12);
+
+  GtkWidget *vbox = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+  gtk_box_pack_start (GTK_BOX (content), vbox, TRUE, TRUE, 0);
+
+  GtkWidget *label = gtk_label_new ("نحوه نمایش تاریخ در پنل:");
+  gtk_widget_set_halign (label, GTK_ALIGN_START);
+  gtk_widget_set_direction (label, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 0);
+
+  GtkWidget *combo = gtk_combo_box_text_new ();
+  gtk_widget_set_direction (combo, GTK_TEXT_DIR_RTL);
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "روز و ماه (۱۲ تیر)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "روز، ماه و سال (۱۲ تیر ۱۴۰۴)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "روز هفته و تاریخ (شنبه ۱۲ تیر)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "روز هفته، تاریخ و سال (شنبه ۹ تیر ۱۴۰۵)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "شمسی و قمری (۱۲ تیر | ۵ محرم)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "فقط روز (۱۲)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "فقط ماه (تیر)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "کامل شمسی و میلادی (۱۲ تیر ۱۴۰۴ | 1 Jul 2024)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "روز و ماه عددی (۱۱-۰۴)");
+  gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), "قالب سفارشی (Custom)...");
+  gtk_combo_box_set_active (GTK_COMBO_BOX (combo), calendar->display_format);
+  gtk_widget_set_halign (combo, GTK_ALIGN_FILL);
+  gtk_box_pack_start (GTK_BOX (vbox), combo, FALSE, FALSE, 0);
+
+  g_object_set_data (G_OBJECT (dialog), "format-combo", combo);
+
+  /* Custom Format Entry */
+  GtkWidget *entry_label = gtk_label_new ("فرمت سفارشی (فقط در حالت قالب سفارشی فعال است):");
+  gtk_widget_set_halign (entry_label, GTK_ALIGN_START);
+  gtk_widget_set_direction (entry_label, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), entry_label, FALSE, FALSE, 0);
+
+  GtkWidget *entry = gtk_entry_new ();
+  gtk_widget_set_direction (entry, GTK_TEXT_DIR_LTR);
+  if (calendar->custom_format != NULL) {
+    gtk_entry_set_text (GTK_ENTRY (entry), calendar->custom_format);
+  } else {
+    gtk_entry_set_text (GTK_ENTRY (entry), "%d %B");
+  }
+  gtk_box_pack_start (GTK_BOX (vbox), entry, FALSE, FALSE, 0);
+  g_object_set_data (G_OBJECT (dialog), "format-entry", entry);
+
+  /* Help list for custom format specifiers */
+  GtkWidget *help_title = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (help_title), "<small><b>راهنمای قالب سفارشی:</b></small>");
+  gtk_widget_set_halign (help_title, GTK_ALIGN_START);
+  gtk_widget_set_direction (help_title, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), help_title, FALSE, FALSE, 2);
+
+  GtkWidget *help_body = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL (help_body),
+    "<small>  <b>%A</b>: روز هفته (شنبه)  |  <b>%d</b>: روز شمسی (۱۲)  |  <b>%m</b>: شماره ماه (۰۴)\n"
+    "  <b>%B</b>: نام ماه (تیر)  |  <b>%Y</b>: سال شمسی (۱۴۰۴)  |  <b>%y</b>: سال ۲ رقمی (۰۴)\n"
+    "  <b>%hd</b>: روز قمری (۵)  |  <b>%hB</b>: ماه قمری  |  <b>%hY</b>: سال قمری (۱۴۴۷)\n"
+    "  <b>%gd</b>: روز میلادی (1)  |  <b>%gB</b>: ماه میلادی  |  <b>%gY</b>: سال میلادی (2024)</small>");
+  gtk_widget_set_halign (help_body, GTK_ALIGN_START);
+  gtk_label_set_xalign (GTK_LABEL (help_body), 1.0);
+  gtk_label_set_justify (GTK_LABEL (help_body), GTK_JUSTIFY_RIGHT);
+  gtk_widget_set_direction (help_body, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), help_body, FALSE, FALSE, 2);
+
+  /* Connect changed signal of combo to toggle entry sensitivity and pre-fill its value */
+  g_signal_connect (combo, "changed", G_CALLBACK (on_format_combo_changed), entry);
+
+  /* Trigger initial state */
+  on_format_combo_changed (GTK_COMBO_BOX (combo), entry);
+
+  /* Font selection */
+  GtkWidget *font_label = gtk_label_new ("فونت و اندازه متن پنل:");
+  gtk_widget_set_halign (font_label, GTK_ALIGN_START);
+  gtk_widget_set_direction (font_label, GTK_TEXT_DIR_RTL);
+  gtk_box_pack_start (GTK_BOX (vbox), font_label, FALSE, FALSE, 0);
+
+  GtkWidget *font_btn = gtk_font_button_new ();
+  gtk_widget_set_direction (font_btn, GTK_TEXT_DIR_RTL);
+  gtk_font_button_set_show_style (GTK_FONT_BUTTON (font_btn), FALSE);
+  gtk_font_button_set_show_size (GTK_FONT_BUTTON (font_btn), TRUE);
+  if (calendar->custom_font != NULL && calendar->custom_font[0] != '\0') {
+    gtk_font_chooser_set_font (GTK_FONT_CHOOSER (font_btn), calendar->custom_font);
+  } else {
+    gtk_font_chooser_set_font (GTK_FONT_CHOOSER (font_btn), "Sans 14");
+  }
+  gtk_box_pack_start (GTK_BOX (vbox), font_btn, FALSE, FALSE, 0);
+
+  g_object_set_data (G_OBJECT (dialog), "font-btn", font_btn);
+
+  g_signal_connect (dialog, "response", G_CALLBACK (on_configure_response), calendar);
+
+  gtk_widget_show_all (dialog);
 }
 
 static void
@@ -756,6 +1250,39 @@ persian_calendar_construct (XfcePanelPlugin *plugin)
   xfce_panel_plugin_set_small (plugin, FALSE);
 
   calendar->window = NULL;
+  calendar->display_format = FORMAT_DAY_MONTH;
+  calendar->custom_font = NULL;
+  calendar->custom_format = NULL;
+  calendar->last_destroy_time = 0;
+
+  /* Initialize Xfconf */
+  if (xfconf_init (NULL)) {
+    calendar->channel = xfconf_channel_get (XFCONF_CHANNEL_NAME);
+    calendar->display_format = xfconf_channel_get_int (calendar->channel, PROP_DISPLAY_FORMAT, FORMAT_DAY_MONTH);
+    if (calendar->display_format < 0 || calendar->display_format >= FORMAT_COUNT)
+      calendar->display_format = FORMAT_DAY_MONTH;
+    
+    gchar *font = xfconf_channel_get_string (calendar->channel, PROP_CUSTOM_FONT, NULL);
+    if (font != NULL && font[0] != '\0') {
+      calendar->custom_font = font;
+    } else {
+      g_free (font);
+    }
+
+    gchar *fmt = xfconf_channel_get_string (calendar->channel, PROP_CUSTOM_FORMAT, NULL);
+    if (fmt != NULL && fmt[0] != '\0') {
+      calendar->custom_format = fmt;
+    } else {
+      g_free (fmt);
+      calendar->custom_format = g_strdup ("%d %B");
+    }
+
+    g_signal_connect (calendar->channel, "property-changed",
+                      G_CALLBACK (on_xfconf_property_changed), calendar);
+  } else {
+    calendar->channel = NULL;
+    calendar->custom_format = g_strdup ("%d %B");
+  }
 
   /* Create and style label */
   calendar->label = gtk_label_new ("");
@@ -763,6 +1290,9 @@ persian_calendar_construct (XfcePanelPlugin *plugin)
   gtk_widget_set_margin_end (calendar->label, 6);
   gtk_widget_set_halign (calendar->label, GTK_ALIGN_CENTER);
   gtk_widget_set_valign (calendar->label, GTK_ALIGN_CENTER);
+
+  /* Apply custom font if set */
+  apply_label_font (calendar);
 
   /* Load initial date label text */
   persian_calendar_update_label (calendar);
@@ -781,6 +1311,9 @@ persian_calendar_construct (XfcePanelPlugin *plugin)
   gtk_widget_add_events (GTK_WIDGET (plugin), GDK_BUTTON_PRESS_MASK);
   g_signal_connect (plugin, "button-press-event",
                     G_CALLBACK (persian_calendar_button_press), NULL);
+
+  /* Show configure menu item */
+  xfce_panel_plugin_menu_show_configure (plugin);
 }
 
 static void
@@ -793,6 +1326,17 @@ persian_calendar_free_data (XfcePanelPlugin *plugin)
       gtk_widget_destroy (calendar->window);
       calendar->window = NULL;
     }
+
+  if (calendar->channel != NULL)
+    {
+      g_signal_handlers_disconnect_by_data (calendar->channel, calendar);
+      calendar->channel = NULL;
+    }
+
+  g_free (calendar->custom_font);
+  calendar->custom_font = NULL;
+  g_free (calendar->custom_format);
+  calendar->custom_format = NULL;
 }
 
 static void
@@ -800,6 +1344,11 @@ persian_calendar_init (PersianCalendar *calendar)
 {
   calendar->label = NULL;
   calendar->window = NULL;
+  calendar->channel = NULL;
+  calendar->display_format = FORMAT_DAY_MONTH;
+  calendar->custom_font = NULL;
+  calendar->custom_format = NULL;
+  calendar->last_destroy_time = 0;
 }
 
 static void
@@ -811,4 +1360,5 @@ persian_calendar_class_init (PersianCalendarClass *klass)
   plugin_class->construct = persian_calendar_construct;
   plugin_class->orientation_changed = persian_calendar_orientation_changed;
   plugin_class->free_data = persian_calendar_free_data;
+  plugin_class->configure_plugin = persian_calendar_configure_dialog;
 }

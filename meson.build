@@ -9,6 +9,7 @@ dependency_xfce4panel = dependency('libxfce4panel-2.0', required: true)
 dependency_xfce4ui = dependency('libxfce4ui-2', required: true)
 dependency_gtk3 = dependency('gtk+-3.0', required: true)
 dependency_glib = dependency('glib-2.0', required: true)
+dependency_xfconf = dependency('libxfconf-0', required: true)
 
 cc = meson.get_compiler('c')
 libm = cc.find_library('m', required: false)
@@ -18,6 +19,7 @@ dependencies = [
   dependency_xfce4ui,
   dependency_gtk3,
   dependency_glib,
+  dependency_xfconf,
   libm
 ]
 
