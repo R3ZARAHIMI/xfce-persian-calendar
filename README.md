@@ -1,134 +1,104 @@
-# پلاگین تقویم جلالی پنل XFCE (Persian Calendar Xfce Panel Plugin)
+<div align="center">
+
+# Persian Calendar — Xfce Panel Plugin
+### تقویم جلالی برای پنل Xfce
 
 [![Language](https://img.shields.io/badge/Language-C-blue.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 [![Toolkit](https://img.shields.io/badge/Toolkit-GTK3-orange.svg)](https://www.gtk.org/)
 [![Desktop](https://img.shields.io/badge/Desktop-Xfce-green.svg)](https://xfce.org/)
+[![License](https://img.shields.io/badge/License-GPL--3.0-red.svg)](#-license--لایسنس)
 
-یک افزونه (Plugin) بومی، سبک و بسیار شیک برای پنل دسکتاپ XFCE که تاریخ جلالی (شمسی) را به همراه امکانات شخصی‌سازی فراوان نمایش می‌دهد. این افزونه با استفاده از زبان برنامه‌نویسی C، کتابخانه GTK3 و متدهای مدرن GObject و معماری سیستم تنظیمات Xfconf پیاده‌سازی شده است.
+A lightweight, native Xfce panel plugin that shows the Jalali (Persian) date with rich customization.
+افزونه‌ای سبک و بومی برای پنل Xfce که تاریخ جلالی را با قابلیت شخصی‌سازی فراوان نمایش می‌دهد.
 
-![اسکرین‌شات افزونه تقویم جلالی](images/sce.png)
+![Screenshot](images/sce.png)
+
+</div>
 
 ---
 
-## 🌟 ویژگی‌ها (Features)
+## ✨ Features · ویژگی‌ها
 
-* **نمایش هوشمند تاریخ شمسی:** نمایش تاریخ جاری در پنل با قالب‌های متنوع و پیش‌فرض.
-* **شخصی‌سازی کامل قالب نمایش:** امکان تنظیم فرمت دلخواه نمایش تاریخ با استفاده از کدهای راهنما (مانند نام روز، روز شمسی، ماه، سال، تاریخ قمری و میلادی).
-* **تغییر فونت و اندازه متن:** تنظیم آسان فونت و سایز متن نمایش داده شده روی پنل از بخش تنظیمات.
-* **شخصی‌سازی رنگ‌ها روی پنل:** امکان انتخاب رنگ‌های دلخواه و مجزا برای **روزهای عادی** و **روزهای تعطیل** روی پنل.
-* **تشخیص هوشمند روزهای تعطیل:** تشخیص و رنگ‌آمیزی خودکار روزهای جمعه و مناسبت‌های تعطیل رسمی سال (شمسی، قمری و میلادی).
-* **سازگاری با جهت پنل:** پشتیبانی کامل از پنل‌های عمودی و افقی (تنظیم خودکار جهت و زاویه متن و آیکون).
-* **تقویم داخلی شیک و مدرن:** با کلیک روی ساعت/تاریخ پنل، پنجره‌ای زیبا باز می‌شود که تقویم کامل ماه جاری را به همراه معادل‌های قمری و میلادی هر روز، مناسبت‌های خاص هر روز و جزئیات کامل نمایش می‌دهد.
+| English | فارسی |
+|---|---|
+| Smart Jalali date display with ready-made or custom formats | نمایش تاریخ شمسی با قالب‌های آماده یا سفارشی |
+| Custom font and text size | تنظیم فونت و اندازه متن |
+| Separate colors for normal and holiday days | رنگ مجزا برای روزهای عادی و تعطیل |
+| Automatic holiday detection (Solar, Hijri, Gregorian) | تشخیص خودکار تعطیلات شمسی، قمری و میلادی |
+| Vertical and horizontal panel support | پشتیبانی از پنل عمودی و افقی |
+| Popup calendar with Hijri/Gregorian equivalents and events | تقویم بازشو با معادل قمری/میلادی و مناسبت‌ها |
 
-## 🚀 نصب پروژه (Installation)
+---
 
-### روش اول: نصب خودکار با اسکریپت (ساده‌ترین روش - پیشنهادی)
-یک اسکریپت خودکار در پروژه قرار داده شده است که تمامی مراحل (شامل شناسایی سیستم‌عامل، نصب خودکار پیش‌نیازها، پاک‌سازی بیلد قبلی، پیکربندی، کامپایل، نصب و ری‌استارت پنل) را به صورت هوشمند و خودکار انجام می‌دهد. 
+## 🚀 Installation · نصب
 
-کافیست دستور زیر را در ترمینال دایرکتوری پروژه اجرا کنید:
+### Automatic · خودکار (Recommended · پیشنهادی)
 
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
----
+The script detects your distro, installs prerequisites, builds, installs, and restarts the panel.
+اسکریپت به‌صورت خودکار توزیع را شناسایی و تمام مراحل نصب و راه‌اندازی را انجام می‌دهد.
 
-## 🛠️ ساخت و نصب دستی پروژه (Manual Build & Installation)
+### Manual · دستی
 
-اگر مایلید مراحل ساخت و نصب را به صورت دستی و گام‌به‌گام انجام دهید:
+**1. Prerequisites · پیش‌نیازها**
 
-### ۱. نصب پیش‌نیازها (Prerequisites)
-ابتدا بسته‌های توسعه‌دهنده زیر را با توجه به توزیع سیستم‌عامل خود نصب کنید:
-
-#### در توزیع Arch Linux:
 ```bash
+# Arch
 sudo pacman -S meson ninja pkgconf xfce4-panel libxfce4ui libxfce4util gtk3 glib2 xfce4-dev-tools
-```
 
-#### در توزیع Debian/Ubuntu:
-```bash
+# Debian / Ubuntu
 sudo apt install meson ninja-build pkg-config libxfce4panel-2.0-dev libxfce4ui-2-dev libgtk-3-dev libglib2.0-dev xfce4-dev-tools
-```
 
-#### در توزیع Fedora:
-```bash
+# Fedora
 sudo dnf install meson ninja-build pkgconf xfce4-panel-devel libxfce4ui-devel gtk3-devel glib2-devel xfce4-dev-tools
 ```
 
-### ۲. ساخت و کامپایل پروژه (Build)
-برای کامپایل افزونه، دستورات زیر را اجرا کنید (برای کارکرد صحیح در پنل XFCE، تعیین `--prefix=/usr` ضروری است):
+**2. Build & Install · ساخت و نصب**
 
 ```bash
-# ایجاد و پیکربندی دایرکتوری build
 meson setup build --prefix=/usr
-
-# کامپایل پروژه
 ninja -C build
-```
-
-### ۳. نصب سیستمی دستی (System-wide Install)
-پس از ساخت موفقیت‌آمیز پروژه، برای نصب دائمی روی سیستم دستور زیر را اجرا کنید:
-
-```bash
 sudo ninja -C build install
 ```
 
-### روش دوم: نصب محلی برای توسعه (Local Installation / Symlink)
-اگر مایلید بدون نصب کل سیستم پروژه را تست یا توسعه دهید، می‌توانید فایل‌های کامپایل شده را به دایرکتوری‌های پنل لینک کنید:
-
-```bash
-# ایجاد لینک فایل باینری افزونه
-sudo ln -sf "$PWD/build/libpersian-calendar.so" /usr/lib/xfce4/panel/plugins/libpersian-calendar.so
-
-# ایجاد لینک فایل دسکتاپ افزونه
-sudo ln -sf "$PWD/build/persian-calendar.desktop" /usr/share/xfce4/panel/plugins/persian-calendar.desktop
-
-# نصب دستی فایل آیکون در مسیر آیکون‌های سیستم
-sudo ln -sf "$PWD/ico.svg" /usr/share/pixmaps/persian-calendar.svg
-```
-
 > [!IMPORTANT]
-> ممکن است مسیر `/usr/lib/xfce4/panel/plugins/` در برخی توزیع‌ها (مانند سیستم‌های ۶۴ بیتی فدورا یا دبیان) متفاوت باشد (مثلا `/usr/lib64/`). در نصب سیستمی با Meson این مسیر به طور خودکار شناسایی می‌شود.
+> `--prefix=/usr` is required. The plugin path (e.g. `/usr/lib64/`) is detected automatically by Meson.
+> تعیین `--prefix=/usr` الزامی است و مسیر افزونه به‌طور خودکار شناسایی می‌شود.
 
 ---
 
-## 🔄 فعال‌سازی افزونه (Restart & Activate)
-
-برای اعمال نصب یا بروزرسانی، ابتدا پنل XFCE را ری‌استارت کنید:
+## 🔄 Activate · فعال‌سازی
 
 ```bash
 xfce4-panel -r
 ```
 
-سپس:
-1. روی فضای خالی پنل خود راست‌کلیک کنید.
-2. گزینه‌ی **Panel -> Add New Items...** را انتخاب کنید.
-3. در لیست جستجو عبارت **Persian Calendar** یا **تقویم جلالی** را بنویسید.
-4. آن را انتخاب کرده و دکمه‌ی **Add** را بزنید.
+Right-click the panel → **Add New Items…** → search **Persian Calendar** → **Add**.
+راست‌کلیک روی پنل ← **Add New Items…** ← جستجوی **تقویم جلالی** ← **Add**.
 
 ---
 
-## ⚙️ گزینه‌های شخصی‌سازی (Configuration)
+## ⚙️ Configuration · شخصی‌سازی
 
-برای دسترسی به تنظیمات افزونه، روی آن در پنل راست‌کلیک کرده و **Properties (ویژگی‌ها)** را انتخاب کنید. در پنجره تنظیمات موارد زیر در دسترس هستند:
+Right-click the plugin → **Properties**.
+راست‌کلیک روی افزونه ← **Properties**.
 
-* **نحوه نمایش تاریخ در پنل:** انتخاب از بین قالب‌های پیش‌فرض آماده یا فعال‌سازی حالت قالب سفارشی (Custom).
-* **فرمت سفارشی:** تعریف دستی نحوه چینش و مقادیر تاریخ با کدهای زیر:
-  * `A%`: روز هفته (مانند شنبه)
-  * `d%`: روز ماه شمسی (مانند ۱۲)
-  * `m%`: شماره ماه شمسی (مانند ۰۴)
-  * `B%`: نام ماه شمسی (مانند تیر)
-  * `Y%`: سال ۴ رقمی شمسی (مانند ۱۴۰۴)
-  * `y%`: سال ۲ رقمی شمسی (مانند ۰۴)
-  * `hd%`: روز ماه قمری | `hB%`: نام ماه قمری | `hY%`: سال قمری
-  * `gd%`: روز میلادی | `gB%`: نام ماه میلادی | `gY%`: سال میلادی
-* **فونت و اندازه متن پنل:** تعیین فونت دلخواه سیستم به همراه سایز نمایش آن روی پنل.
-* **رنگ روزهای عادی:** انتخاب رنگ دلخواه برای نمایش تاریخ در روزهای عادی هفته روی پنل.
-* **رنگ روزهای تعطیل:** انتخاب رنگ دلخواه برای روزهای جمعه یا تعطیلات رسمی روی پنل.
+**Custom format codes · کدهای قالب سفارشی**
+
+| Code | Meaning · معنی | Code | Meaning · معنی |
+|---|---|---|---|
+| `A%` | Weekday · روز هفته | `Y%` | 4-digit year · سال ۴ رقمی |
+| `d%` | Day · روز ماه | `y%` | 2-digit year · سال ۲ رقمی |
+| `m%` | Month number · شماره ماه | `hd%` `hB%` `hY%` | Hijri · قمری |
+| `B%` | Month name · نام ماه | `gd%` `gB%` `gY%` | Gregorian · میلادی |
 
 ---
 
-## 📄 لایسنس (License)
+## 📄 License · لایسنس
 
-این پروژه تحت لایسنس GPL-3.0 منتشر شده است. استفاده، ویرایش و توزیع آن با حفظ حق مالکیت و درج لایسنس کاملاً آزاد است.
+Released under **GPL-3.0**. Free to use, modify, and distribute.
+منتشرشده تحت لایسنس **GPL-3.0** — استفاده، ویرایش و توزیع آزاد.
