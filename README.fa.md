@@ -33,6 +33,8 @@
 ### خودکار (پیشنهادی)
 
 ```bash
+git clone https://github.com/R3ZARAHIMI/xfce-persian-calendar.git
+cd xfce-persian-calendar
 chmod +x install.sh
 ./install.sh
 ```

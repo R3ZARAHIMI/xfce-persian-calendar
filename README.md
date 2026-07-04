@@ -33,6 +33,8 @@ A lightweight, native Xfce panel plugin that shows the Jalali (Persian) date wit
 ### Automatic (Recommended)
 
 ```bash
+git clone https://github.com/R3ZARAHIMI/xfce-persian-calendar.git
+cd xfce-persian-calendar
 chmod +x install.sh
 ./install.sh
 ```
